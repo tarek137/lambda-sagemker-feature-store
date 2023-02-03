@@ -15,7 +15,8 @@ region = "xxxxxx"
 bucket ="xxxxxxxxxx"
 
 s3_client = boto3.client("s3", region_name=region)
-region = boto3.Session().region_name
+
+# Setup sagemaker feature store
 boto_session = boto3.Session(region_name=region)
 sagemaker_client = boto_session.client(service_name="sagemaker", region_name=region)
 featurestore_runtime = boto_session.client(
@@ -32,21 +33,17 @@ feature_store_session = Session(
 default_s3_bucket_name = feature_store_session.default_bucket()
 prefix = "sagemaker-featurestore-demo"
 
-# You can modify the following to use a role of your choosing. See the documentation for how to create this.
-role = get_execution_role()
-print(role)
-
 
 source_data = s3_client.get_object(Bucket=bucket , Key="csv_moussa - Copy.csv")
 
 fitness_feature_group_name = "fitness-feature-group-" + strftime("%d-%H-%M-%S", gmtime())
 
-#define feature group
+# Define feature group
 fitness_feature_group = FeatureGroup(
     name=fitness_feature_group_name, sagemaker_session=feature_store_session
 )
 
-# record identifier and event time feature names
+# Record identifier and event time feature names
 record_identifier_feature_name = "ID"
 event_time_feature_name = "Date"
 
@@ -61,21 +58,20 @@ def wait_for_feature_group_creation_complete(feature_group):
     print(f"FeatureGroup {feature_group.name} successfully created.")
 
 def handler(event, context):
-    # read source data
-
+    # Read source data
     raw_data = pd.read_csv(source_data['Body'] ,encoding='utf-8')
-
-    data = raw_data[["Date et heure de l'envoi",'Prénom', 'Nom de famille' , 'ID']].copy()
-
+    # Select features
+    data = raw_data[["Date et heure de l'envoi",'Prénom', 'Nom de famille' , 'ID']]
+    # Drop na values and rename columns
     data = data.dropna(subset=["Date et heure de l'envoi"])
     data.rename(columns={'Prénom': 'Prenom'}, inplace=True)
     data.rename(columns={'Nom de famille': 'Nom_de_famille'}, inplace=True)
     data.rename(columns={"Date et heure de l'envoi": 'Date'}, inplace=True)
 
-    # define feature group
+    # Load feature groupe defintion
     fitness_feature_group.load_feature_definitions(data_frame=data)
 
-    # create feature group
+    # Create feature group
     fitness_feature_group.create(
         s3_uri=f"s3://{default_s3_bucket_name}/{prefix}",
         record_identifier_name=record_identifier_feature_name,
@@ -84,8 +80,10 @@ def handler(event, context):
         enable_online_store=True,
     )
 
+    # Wait until feature group is created
     wait_for_feature_group_creation_complete(feature_group=fitness_feature_group)
 
+    # Ingest Data
     fitness_feature_group.ingest(data_frame=data, max_workers=1, wait=True)
 
 
